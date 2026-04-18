@@ -1,0 +1,19 @@
+{
+  "name": "voter-management-system",
+  "private": true,
+  "version": "1.0.0",
+  "description": "نظام إدارة الاقتراع — لوحة تحكم، ناخبين، تصويت سريع، Excel، صلاحيات",
+  "scripts": {
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "predev": "npx --yes kill-port 4000",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "cd client && npm run build && cd ../server && npm run build",
+    "start": "cd server && npm start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "kill-port": "^2.0.1"
+  }
+}

@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  font-family: "Tajawal", system-ui, sans-serif;
+}
+
+/* شبكة مستوحاة من الكوفية. لإضافة صورتك: انسخ الملف إلى client/public باسم keffiyeh-bg.png */
+.keffiyeh-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  background-color: #020617;
+  background-image: repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.045) 0,
+      rgba(255, 255, 255, 0.045) 1px,
+      transparent 1px,
+      10px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(255, 255, 255, 0.035) 0,
+      rgba(255, 255, 255, 0.035) 1px,
+      transparent 1px,
+      10px
+    ),
+    linear-gradient(180deg, rgba(2, 6, 23, 0.97), rgba(15, 23, 42, 0.9));
+  background-attachment: fixed;
+}
+
+.keffiyeh-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("/keffiyeh-bg.png") center / cover no-repeat fixed;
+  opacity: 0.14;
+  pointer-events: none;
+}
