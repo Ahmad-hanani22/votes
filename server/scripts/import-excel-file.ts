@@ -62,6 +62,16 @@ async function main() {
   await db.query("BEGIN");
 
   try {
+    const parsedRows: Array<{
+      full_name: string;
+      national_id: string;
+      status: 0 | 1;
+      voted_at: string | null;
+      area: string | null;
+      batch_id: number;
+      list_number: number | null;
+    }> = [];
+
     for (const row of raw) {
       const parsed = parseVoterFromExcelRow(row);
       if (!parsed) {
@@ -74,10 +84,26 @@ async function main() {
       let status: 0 | 1 = 0;
       if (statusRaw === 1 || statusRaw === "1" || String(statusRaw).includes("تم")) status = 1;
       const voted_at = status === 1 ? parseVotedAt(row["voted_at"] ?? row["وقت الانتخاب"]) : null;
+      parsedRows.push({ full_name, national_id, status, voted_at, area, batch_id: batchId, list_number });
+    }
+
+    const chunkSize = 500;
+    for (let i = 0; i < parsedRows.length; i += chunkSize) {
+      const chunk = parsedRows.slice(i, i + chunkSize);
+      const placeholders: string[] = [];
+      const values: Array<string | number | null> = [];
+
+      chunk.forEach((r, idx) => {
+        const base = idx * 7;
+        placeholders.push(
+          `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`
+        );
+        values.push(r.full_name, r.national_id, r.status, r.voted_at, r.area, r.batch_id, r.list_number);
+      });
 
       const result = await db.query<{ inserted: boolean }>(
         `INSERT INTO voters (full_name, national_id, status, voted_at, area, batch_id, list_number)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         VALUES ${placeholders.join(",")}
          ON CONFLICT(national_id) DO UPDATE SET
            full_name = EXCLUDED.full_name,
            status = EXCLUDED.status,
@@ -87,11 +113,13 @@ async function main() {
            list_number = EXCLUDED.list_number,
            updated_at = CURRENT_TIMESTAMP
          RETURNING (xmax = 0) AS inserted`,
-        [full_name, national_id, status, voted_at, area, batchId, list_number]
+        values
       );
 
-      if (result.rows[0]?.inserted) inserted++;
-      else updated++;
+      for (const row of result.rows) {
+        if (row.inserted) inserted++;
+        else updated++;
+      }
     }
     await db.query("COMMIT");
   } catch (err) {
