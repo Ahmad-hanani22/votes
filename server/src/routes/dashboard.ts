@@ -67,6 +67,7 @@ r.get("/stats", async (req, res) => {
          FROM import_batches b
          LEFT JOIN voters v ON v.batch_id = b.id
          GROUP BY b.id
+         HAVING COUNT(v.id) > 0
          ORDER BY b.id DESC`
       );
     }

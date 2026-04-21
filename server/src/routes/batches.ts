@@ -33,6 +33,7 @@ r.get("/", async (_req, res) => {
         (SELECT COUNT(*) FROM voters v WHERE v.batch_id = b.id) AS voter_count,
         (SELECT COUNT(*) FROM voters v WHERE v.batch_id = b.id AND v.status = 1) AS voted_count
        FROM import_batches b
+       WHERE EXISTS (SELECT 1 FROM voters v WHERE v.batch_id = b.id)
        ORDER BY b.id DESC`
     );
     res.json(rows);

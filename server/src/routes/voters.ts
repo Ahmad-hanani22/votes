@@ -302,7 +302,7 @@ r.get("/", async (req, res) => {
       total = countResult[0]?.c || 0;
 
       list = await query<VoterRow>(
-        `SELECT ${VOTER_COLS} FROM voters${whereSql} ORDER BY ${ord} LIMIT $${paramIdx + 1} OFFSET $${paramIdx + 2}`,
+        `SELECT ${VOTER_COLS} FROM voters${whereSql} ORDER BY ${ord} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
         [...listParams, pageSize, offset]
       );
     }
