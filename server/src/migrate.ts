@@ -1,38 +1,58 @@
-import type { DatabaseSync } from "node:sqlite";
+import { query, queryOne } from "./db.js";
 
-function voterHasColumn(db: DatabaseSync, col: string) {
-  const rows = db.prepare("PRAGMA table_info(voters)").all() as { name: string }[];
-  return rows.some((c) => c.name === col);
+async function voterHasColumn(col: string) {
+  try {
+    await query(`SELECT ${col} FROM voters LIMIT 1`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** ترقية مخطط قاعدة موجودة (دفعات استيراد + رقم الصف من Excel). */
-export function runMigrations(db: DatabaseSync) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS import_batches (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+export async function runMigrations() {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS import_batches (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Check and add columns if needed
+    const hasBatchId = await voterHasColumn("batch_id");
+    if (!hasBatchId) {
+      await query("ALTER TABLE voters ADD COLUMN batch_id INTEGER REFERENCES import_batches(id)");
+    }
+
+    const hasListNumber = await voterHasColumn("list_number");
+    if (!hasListNumber) {
+      await query("ALTER TABLE voters ADD COLUMN list_number INTEGER");
+    }
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_batches_created ON import_batches(created_at DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_voters_batch ON voters(batch_id)`);
+
+    const batchCountResult = await query<{ c: number }>("SELECT COUNT(*) as c FROM import_batches");
+    const batchCount = batchCountResult[0]?.c || 0;
+
+    const voterNullBatchResult = await query<{ c: number }>(
+      "SELECT COUNT(*) as c FROM voters WHERE batch_id IS NULL"
     );
-    CREATE INDEX IF NOT EXISTS idx_batches_created ON import_batches(created_at DESC);
-  `);
+    const voterNullBatch = voterNullBatchResult[0]?.c || 0;
 
-  if (!voterHasColumn(db, "batch_id")) {
-    db.exec("ALTER TABLE voters ADD COLUMN batch_id INTEGER REFERENCES import_batches(id)");
-  }
-  if (!voterHasColumn(db, "list_number")) {
-    db.exec("ALTER TABLE voters ADD COLUMN list_number INTEGER");
-  }
-
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_voters_batch ON voters(batch_id);`);
-
-  const batchCount = (db.prepare("SELECT COUNT(*) as c FROM import_batches").get() as { c: number }).c;
-  const voterNullBatch = (
-    db.prepare("SELECT COUNT(*) as c FROM voters WHERE batch_id IS NULL").get() as { c: number }
-  ).c;
-
-  if (batchCount === 0 && voterNullBatch > 0) {
-    const info = db.prepare("INSERT INTO import_batches (title) VALUES (?)").run("البيانات الحالية (قبل التصنيف)");
-    const bid = Number(info.lastInsertRowid);
-    db.prepare("UPDATE voters SET batch_id = ? WHERE batch_id IS NULL").run(bid);
+    if (batchCount === 0 && voterNullBatch > 0) {
+      const result = await queryOne<{ id: number }>(
+        "INSERT INTO import_batches (title) VALUES ($1) RETURNING id",
+        ["البيانات الحالية (قبل التصنيف)"]
+      );
+      const bid = result?.id;
+      if (bid) {
+        await query("UPDATE voters SET batch_id = $1 WHERE batch_id IS NULL", [bid]);
+      }
+    }
+  } catch (err) {
+    console.error("migration error:", err);
   }
 }

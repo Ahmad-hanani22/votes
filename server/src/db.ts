@@ -1,95 +1,134 @@
-import { DatabaseSync } from "node:sqlite";
-import path from "node:path";
-import fs from "node:fs";
-import { fileURLToPath } from "node:url";
+import pkg from "pg";
 import bcrypt from "bcryptjs";
 import { runMigrations } from "./migrate.js";
 import { autoAssignBatchesFromAreas } from "./batchFromAreas.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = process.env.SQLITE_PATH ?? path.join(__dirname, "..", "data", "app.db");
+const { Pool } = pkg;
 
-const dir = path.dirname(dbPath);
-if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error("DATABASE_URL environment variable is required");
+}
 
-export const db = new DatabaseSync(dbPath);
+export const db = new Pool({
+  connectionString,
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+});
 
-export function runTransaction<T>(fn: () => T): T {
-  db.exec("BEGIN IMMEDIATE");
+db.on("error", (err) => {
+  console.error("Unexpected error on idle client", err);
+});
+
+export async function query<T = any>(text: string, params?: (string | number | boolean | null | undefined)[]): Promise<T[]> {
+  const res = await db.query(text, params);
+  return res.rows as T[];
+}
+
+export async function queryOne<T = any>(text: string, params?: (string | number | boolean | null | undefined)[]): Promise<T | null> {
+  const rows = await query<T>(text, params);
+  return rows[0] || null;
+}
+
+export async function runTransaction<T>(fn: () => Promise<T>): Promise<T> {
+  const client = await db.connect();
   try {
-    const result = fn();
-    db.exec("COMMIT");
+    await client.query("BEGIN");
+    const result = await fn();
+    await client.query("COMMIT");
     return result;
   } catch (e) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {
-      /* ignore */
-    }
+    await client.query("ROLLBACK");
     throw e;
+  } finally {
+    client.release();
   }
 }
 
-export function initSchema() {
-  db.exec(`PRAGMA journal_mode = WAL;`);
-  db.exec(`PRAGMA foreign_keys = ON;`);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('admin','staff')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS voters (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      full_name TEXT NOT NULL,
-      national_id TEXT NOT NULL UNIQUE,
-      status INTEGER NOT NULL DEFAULT 0 CHECK(status IN (0,1)),
-      voted_at TEXT,
-      area TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_voters_name ON voters(full_name COLLATE NOCASE);
-    CREATE INDEX IF NOT EXISTS idx_voters_nid ON voters(national_id);
-    CREATE INDEX IF NOT EXISTS idx_voters_status ON voters(status);
-
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      action TEXT NOT NULL,
-      entity TEXT NOT NULL,
-      entity_id TEXT,
-      details TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
-  `);
-
-  runMigrations(db);
-
+export async function initSchema() {
   try {
-    autoAssignBatchesFromAreas(db);
-  } catch (e) {
-    console.error("autoAssignBatchesFromAreas:", e);
-  }
+    // Create tables
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('admin','staff')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
 
-  const count = db.prepare("SELECT COUNT(*) as c FROM users").get() as { c: number };
-  if (count.c === 0) {
-    const hash = bcrypt.hashSync("admin123", 10);
-    db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?,?,?)").run("admin", hash, "admin");
-  }
+      CREATE TABLE IF NOT EXISTS voters (
+        id SERIAL PRIMARY KEY,
+        full_name TEXT NOT NULL,
+        national_id TEXT NOT NULL UNIQUE,
+        status INTEGER NOT NULL DEFAULT 0 CHECK(status IN (0,1)),
+        voted_at TIMESTAMP,
+        area TEXT,
+        batch_id INTEGER,
+        list_number INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
 
-  const staffRow = db.prepare("SELECT id FROM users WHERE username = ?").get("staff") as { id: number } | undefined;
-  if (staffRow) {
-    db.prepare("DELETE FROM audit_logs WHERE user_id = ?").run(staffRow.id);
-    db.prepare("DELETE FROM users WHERE id = ?").run(staffRow.id);
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        entity TEXT NOT NULL,
+        entity_id TEXT,
+        details TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS import_batches (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Create indices
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_voters_name ON voters(full_name);
+      CREATE INDEX IF NOT EXISTS idx_voters_nid ON voters(national_id);
+      CREATE INDEX IF NOT EXISTS idx_voters_status ON voters(status);
+      CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_voters_batch ON voters(batch_id);
+      CREATE INDEX IF NOT EXISTS idx_batches_created ON import_batches(created_at DESC);
+    `);
+
+    await runMigrations();
+
+    try {
+      await autoAssignBatchesFromAreas();
+    } catch (e) {
+      console.error("autoAssignBatchesFromAreas:", e);
+    }
+
+    const countResult = await queryOne<{ c: number }>("SELECT COUNT(*) as c FROM users");
+    const count = parseInt(String(countResult?.c || 0));
+
+    if (count === 0) {
+      const hash = bcrypt.hashSync("admin123", 10);
+      await db.query("INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)", [
+        "admin",
+        hash,
+        "admin",
+      ]);
+      console.log("✓ Default admin user created (username: admin, password: admin123)");
+    }
+
+    const staffRow = await queryOne<{ id: number }>("SELECT id FROM users WHERE username = $1", ["staff"]);
+    if (staffRow?.id) {
+      await db.query("DELETE FROM audit_logs WHERE user_id = $1", [staffRow.id]);
+      await db.query("DELETE FROM users WHERE id = $1", [staffRow.id]);
+    }
+
+    console.log("✓ Database schema initialized successfully");
+  } catch (err) {
+    console.error("Error initializing schema:", err);
+    throw err;
   }
 }
 

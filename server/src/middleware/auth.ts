@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import type { UserRow } from "../db.js";
-import { db } from "../db.js";
+import { queryOne } from "../db.js";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "dev-only-change-me";
 
@@ -42,8 +42,9 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-export function getUserById(id: number) {
-  return db.prepare("SELECT id, username, role, created_at FROM users WHERE id = ?").get(id) as
-    | { id: number; username: string; role: "admin" | "staff"; created_at: string }
-    | undefined;
+export async function getUserById(id: number) {
+  return await queryOne<{ id: number; username: string; role: "admin" | "staff"; created_at: string }>(
+    "SELECT id, username, role, created_at FROM users WHERE id = $1",
+    [id]
+  );
 }

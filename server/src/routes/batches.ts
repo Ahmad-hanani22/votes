@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, runTransaction } from "../db.js";
+import { query, queryOne, runTransaction } from "../db.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { logAudit } from "../audit.js";
 import { autoAssignBatchesFromAreas } from "../batchFromAreas.js";
@@ -8,9 +8,9 @@ const r = Router();
 r.use(requireAuth);
 
 /** إعادة بناء الدفعات من عمود «مركز التسجيل والاقتراع» لكل ناخب (مفيد بعد استيراد دون إعادة تشغيل الخادم). */
-r.post("/rebuild-from-areas", requireAdmin, (req, res) => {
+r.post("/rebuild-from-areas", requireAdmin, async (req, res) => {
   try {
-    autoAssignBatchesFromAreas(db);
+    await autoAssignBatchesFromAreas();
     logAudit(req.auth!.sub, "rebuild_batches", "import_batches", null, {});
     res.json({ ok: true });
   } catch (e) {
@@ -20,34 +20,41 @@ r.post("/rebuild-from-areas", requireAdmin, (req, res) => {
   }
 });
 
-r.get("/", (_req, res) => {
-  const rows = db
-    .prepare(
+r.get("/", async (_req, res) => {
+  try {
+    const rows = await query<{
+      id: number;
+      title: string;
+      created_at: string;
+      voter_count: number;
+      voted_count: number;
+    }>(
       `SELECT b.id, b.title, b.created_at,
         (SELECT COUNT(*) FROM voters v WHERE v.batch_id = b.id) AS voter_count,
         (SELECT COUNT(*) FROM voters v WHERE v.batch_id = b.id AND v.status = 1) AS voted_count
        FROM import_batches b
        ORDER BY b.id DESC`
-    )
-    .all() as {
-    id: number;
-    title: string;
-    created_at: string;
-    voter_count: number;
-    voted_count: number;
-  }[];
-  res.json(rows);
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("get batches error:", err);
+    res.status(500).json({ error: "خطأ الخادم" });
+  }
 });
 
-r.post("/", requireAdmin, (req, res) => {
-  const body = req.body as { title?: unknown };
-  const title = String(body?.title ?? "").trim();
-  if (!title) return res.status(400).json({ error: "عنوان الدفعة مطلوب (مثلاً اسم المدرسة)" });
+r.post("/", requireAdmin, async (req, res) => {
   try {
-    const info = db.prepare("INSERT INTO import_batches (title) VALUES (?)").run(title);
-    const id = Number(info.lastInsertRowid);
+    const body = req.body as { title?: unknown };
+    const title = String(body?.title ?? "").trim();
+    if (!title) return res.status(400).json({ error: "عنوان الدفعة مطلوب (مثلاً اسم المدرسة)" });
+    
+    const result = await queryOne<{ id: number }>(
+      "INSERT INTO import_batches (title) VALUES ($1) RETURNING id",
+      [title]
+    );
+    const id = result?.id;
     try {
-      logAudit(req.auth!.sub, "create", "import_batch", id, { title });
+      logAudit(req.auth!.sub, "create", "import_batch", id || null, { title });
     } catch (logErr) {
       console.error("audit log (import_batch create):", logErr);
     }
@@ -59,18 +66,29 @@ r.post("/", requireAdmin, (req, res) => {
   }
 });
 
-r.delete("/:id", requireAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isFinite(id)) return res.status(400).json({ error: "معرف غير صالح" });
-  const row = db.prepare("SELECT title FROM import_batches WHERE id = ?").get(id) as { title: string } | undefined;
-  if (!row) return res.status(404).json({ error: "الدفعة غير موجودة" });
-  const removed = runTransaction(() => {
-    const v = db.prepare("DELETE FROM voters WHERE batch_id = ?").run(id);
-    db.prepare("DELETE FROM import_batches WHERE id = ?").run(id);
-    return v.changes;
-  });
-  logAudit(req.auth!.sub, "delete", "import_batch", id, { title: row.title, voters_removed: removed });
-  res.json({ ok: true, voters_removed: removed });
+r.delete("/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرف غير صالح" });
+    
+    const row = await queryOne<{ title: string }>("SELECT title FROM import_batches WHERE id = $1", [id]);
+    if (!row) return res.status(404).json({ error: "الدفعة غير موجودة" });
+    
+    const removed = await runTransaction(async () => {
+      const v = await queryOne<{ count: number }>(
+        "DELETE FROM voters WHERE batch_id = $1 RETURNING COUNT(*) as count",
+        [id]
+      );
+      await queryOne("DELETE FROM import_batches WHERE id = $1", [id]);
+      return v?.count || 0;
+    });
+    
+    logAudit(req.auth!.sub, "delete", "import_batch", id, { title: row.title, voters_removed: removed });
+    res.json({ ok: true, voters_removed: removed });
+  } catch (err) {
+    console.error("delete batch error:", err);
+    res.status(500).json({ error: "خطأ الخادم" });
+  }
 });
 
 export default r;
