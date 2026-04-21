@@ -10,9 +10,9 @@ export const TEMP_IMPORT_BATCH_TITLE = "استيراد Excel (مؤقت)";
 export async function autoAssignBatchesFromAreas() {
   try {
     const areasResult = await query<{ a: string }>(
-      `SELECT DISTINCT TRIM(area) AS a FROM voters
+      `SELECT DISTINCT TRIM(area) COLLATE "C" AS a FROM voters
        WHERE area IS NOT NULL AND TRIM(area) != ''
-       ORDER BY a COLLATE "C"`
+       ORDER BY a`
     );
 
     for (const { a } of areasResult) {

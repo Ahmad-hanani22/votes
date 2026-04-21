@@ -12,10 +12,15 @@ if (!connectionString) {
 
 export const db = new Pool({
   connectionString,
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  ssl:
+    process.env.DATABASE_SSL === "true" ||
+    process.env.NODE_ENV === "production" ||
+    connectionString.includes("render.com")
+      ? { rejectUnauthorized: false }
+      : false,
 });
 
-db.on("error", (err) => {
+db.on("error", (err: Error) => {
   console.error("Unexpected error on idle client", err);
 });
 
@@ -100,24 +105,22 @@ export async function initSchema() {
 
     await runMigrations();
 
-    try {
-      await autoAssignBatchesFromAreas();
-    } catch (e) {
+    // Run area-to-batch syncing in background so API startup is not blocked.
+    void autoAssignBatchesFromAreas().catch((e) => {
       console.error("autoAssignBatchesFromAreas:", e);
-    }
+    });
 
-    const countResult = await queryOne<{ c: number }>("SELECT COUNT(*) as c FROM users");
-    const count = parseInt(String(countResult?.c || 0));
-
-    if (count === 0) {
-      const hash = bcrypt.hashSync("admin123", 10);
-      await db.query("INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)", [
-        "admin",
-        hash,
-        "admin",
-      ]);
-      console.log("✓ Default admin user created (username: admin, password: admin123)");
-    }
+    const defaultUsername = "ahmad_hanani";
+    const defaultPassword = "123456789";
+    const hash = bcrypt.hashSync(defaultPassword, 10);
+    await db.query(
+      `INSERT INTO users (username, password_hash, role)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (username)
+       DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role`,
+      [defaultUsername, hash, "admin"]
+    );
+    console.log(`✓ Default admin user ensured (username: ${defaultUsername})`);
 
     const staffRow = await queryOne<{ id: number }>("SELECT id FROM users WHERE username = $1", ["staff"]);
     if (staffRow?.id) {
