@@ -4,6 +4,7 @@ import { query, queryOne, runTransaction } from "../db.js";
 import type { VoterRow } from "../db.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { logAudit } from "../audit.js";
+import { isBundledVoterIndexLoaded, matchBundledNationalIds } from "../bundledVoterIndex.js";
 
 const r = Router();
 r.use(requireAuth);
@@ -39,15 +40,39 @@ r.get("/search", async (req, res) => {
     if (q.length < min) {
       return res.json({ voters: [], message: `اكتب ${min} أحرف على الأقل للبحث المباشر` });
     }
+    if (isBundledVoterIndexLoaded()) {
+      let batchTitle: string | null = null;
+      if (batchId) {
+        const bt = await queryOne<{ title: string }>("SELECT title FROM import_batches WHERE id = $1", [batchId]);
+        batchTitle = bt?.title?.trim() ?? null;
+      }
+      const orderedNids = matchBundledNationalIds(q, batchId ? batchTitle : null).slice(0, 50);
+      if (orderedNids.length === 0) {
+        return res.json({ voters: [] });
+      }
+      const batchSql = batchId ? " AND batch_id = $2" : "";
+      const params: (string | number | string[])[] = [orderedNids];
+      if (batchId) params.push(batchId);
+      const dbRows = await query<VoterRow>(
+        `SELECT ${VOTER_COLS} FROM voters
+         WHERE national_id = ANY($1::text[])${batchSql}`,
+        params
+      );
+      const m = new Map(dbRows.map((r) => [r.national_id, r]));
+      const rows = orderedNids.map((id) => m.get(id)).filter((x): x is VoterRow => !!x);
+      return res.json({ voters: rows });
+    }
     const safe = q.replace(/%/g, "").replace(/_/g, "");
+    const compact = safe.replace(/\s+/g, "");
+    const compactLike = `%${compact}%`;
     const like = `%${safe}%`;
     const batchSql = batchId ? " AND batch_id = $3" : "";
-    const params: (string | number)[] = [like, like];
+    const params: (string | number)[] = [compactLike, like];
     if (batchId) params.push(batchId);
     const rows = await query<VoterRow>(
       `SELECT ${VOTER_COLS}
        FROM voters
-       WHERE (full_name ILIKE $1 OR national_id ILIKE $2)${batchSql}
+       WHERE (full_name_nospace ILIKE $1 OR national_id_nospace ILIKE $1 OR COALESCE(area, '') ILIKE $2)${batchSql}
        ORDER BY full_name COLLATE "C"
        LIMIT 50`,
       params
@@ -131,16 +156,62 @@ r.get("/", async (req, res) => {
     let list: VoterRow[];
     let total: number;
     
-    if (q.length >= 1) {
+    if (q.length >= 1 && isBundledVoterIndexLoaded()) {
+      let batchTitle: string | null = null;
+      if (batchId) {
+        const bt = await queryOne<{ title: string }>("SELECT title FROM import_batches WHERE id = $1", [batchId]);
+        batchTitle = bt?.title?.trim() ?? null;
+      }
+      const orderedNids = matchBundledNationalIds(q, batchId ? batchTitle : null);
+      if (orderedNids.length === 0) {
+        list = [];
+        total = 0;
+      } else {
+        const countParams: (string | number | string[])[] = [orderedNids];
+        const countParts: string[] = ["national_id = ANY($1::text[])"];
+        let cp = 2;
+        if (batchId) {
+          countParts.push(`batch_id = $${cp++}`);
+          countParams.push(batchId);
+        }
+        if (statusF === "pending") countParts.push("status = 0");
+        if (statusF === "voted") countParts.push("status = 1");
+        const countWhere = ` WHERE ${countParts.join(" AND ")}`;
+        const countSql = `SELECT COUNT(*)::int AS c FROM voters${countWhere}`;
+
+        const pageSlice = orderedNids.slice(offset, offset + pageSize);
+        const listParams: (string | number | string[])[] = [pageSlice];
+        const listParts: string[] = ["national_id = ANY($1::text[])"];
+        let lp = 2;
+        if (batchId) {
+          listParts.push(`batch_id = $${lp++}`);
+          listParams.push(batchId);
+        }
+        if (statusF === "pending") listParts.push("status = 0");
+        if (statusF === "voted") listParts.push("status = 1");
+        const listWhere = ` WHERE ${listParts.join(" AND ")}`;
+
+        const [countResult, dbRows] = await Promise.all([
+          query<{ c: number }>(countSql, countParams),
+          pageSlice.length === 0
+            ? Promise.resolve([] as VoterRow[])
+            : query<VoterRow>(`SELECT ${VOTER_COLS} FROM voters${listWhere}`, listParams),
+        ]);
+        total = countResult[0]?.c || 0;
+        const m = new Map(dbRows.map((r) => [r.national_id, r]));
+        list = pageSlice.map((id) => m.get(id)).filter((x): x is VoterRow => !!x);
+      }
+    } else if (q.length >= 1) {
       const safe = q.replace(/%/g, "").replace(/_/g, "");
       const compact = safe.replace(/\s+/g, "");
       const like = `%${safe}%`;
       const compactLike = `%${compact}%`;
+      /** أخف على المخطّط: عمودان مفهرسان (nospace) + مركز — بدل 5× ILIKE */
       const whereParts: string[] = [
-        "(full_name ILIKE $1 OR national_id ILIKE $2 OR full_name_nospace ILIKE $3 OR national_id_nospace ILIKE $4 OR COALESCE(area, '') ILIKE $5)",
+        "(full_name_nospace ILIKE $1 OR national_id_nospace ILIKE $1 OR COALESCE(area, '') ILIKE $2)",
       ];
-      const whereParams: (string | number)[] = [like, like, compactLike, compactLike, like];
-      let paramIdx = 6;
+      const whereParams: (string | number)[] = [compactLike, like];
+      let paramIdx = 3;
       if (batchId) {
         whereParts.push(`batch_id = $${paramIdx}`);
         whereParams.push(batchId);

@@ -15,6 +15,7 @@ export default function VotersPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [rows, setRows] = useState<Voter[]>([]);
+  const [lastPageSize, setLastPageSize] = useState(25);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -26,7 +27,8 @@ export default function VotersPage() {
   const skipNextScopeEffectFetch = useRef(false);
   qRef.current = q;
   pageRef.current = page;
-  const pageSize = 25;
+  const defaultPageSize = 25;
+  const searchPageSize = 20;
 
   /** جلب القائمة: مرّر `queryText` / `pageNum` من onChange حتى ما نستنى دورة React */
   const fetchList = useCallback(
@@ -35,6 +37,7 @@ export default function VotersPage() {
       const soft = opts?.soft === true;
       const qParam = (opts?.queryText !== undefined ? opts.queryText : qRef.current).trim();
       const pageParam = opts?.pageNum ?? pageRef.current;
+      const pageSize = qParam.length > 0 ? searchPageSize : defaultPageSize;
       loadGenerationRef.current += 1;
       const loadId = loadGenerationRef.current;
       if (!silent) {
@@ -60,6 +63,7 @@ export default function VotersPage() {
         if (loadId !== loadGenerationRef.current) return;
         setRows(data.voters);
         setTotal(data.total);
+        setLastPageSize(data.pageSize ?? defaultPageSize);
       } catch (e: unknown) {
         if (axios.isCancel(e)) {
           // ignore
@@ -240,7 +244,7 @@ export default function VotersPage() {
 
       <div className="flex items-center justify-between text-sm text-slate-400">
         <span>
-          عرض {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} من {total}
+          عرض {(page - 1) * lastPageSize + 1}–{Math.min(page * lastPageSize, total)} من {total}
         </span>
         <div className="flex gap-2">
           <button
@@ -253,7 +257,7 @@ export default function VotersPage() {
           </button>
           <button
             type="button"
-            disabled={page * pageSize >= total}
+            disabled={page * lastPageSize >= total}
             className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40"
             onClick={() => setPage((p) => p + 1)}
           >

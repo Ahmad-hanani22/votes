@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { runMigrations } from "./migrate.js";
 import { autoAssignBatchesFromAreas } from "./batchFromAreas.js";
 import { runBundledVotersSeed } from "./bundledVotersSeed.js";
+import { loadBundledVoterIndex } from "./bundledVoterIndex.js";
 
 const { Pool } = pkg;
 
@@ -13,6 +14,7 @@ if (!connectionString) {
 
 export const db = new Pool({
   connectionString,
+  max: Number(process.env.PG_POOL_MAX) || 25,
   ssl:
     process.env.DATABASE_SSL === "true" ||
     process.env.NODE_ENV === "production" ||
@@ -25,12 +27,12 @@ db.on("error", (err: Error) => {
   console.error("Unexpected error on idle client", err);
 });
 
-export async function query<T = any>(text: string, params?: (string | number | boolean | null | undefined)[]): Promise<T[]> {
+export async function query<T = any>(text: string, params?: unknown[]): Promise<T[]> {
   const res = await db.query(text, params);
   return res.rows as T[];
 }
 
-export async function queryOne<T = any>(text: string, params?: (string | number | boolean | null | undefined)[]): Promise<T | null> {
+export async function queryOne<T = any>(text: string, params?: unknown[]): Promise<T | null> {
   const rows = await query<T>(text, params);
   return rows[0] || null;
 }
@@ -107,6 +109,7 @@ export async function initSchema() {
     await runMigrations();
 
     await runBundledVotersSeed();
+    loadBundledVoterIndex();
 
     // Run area-to-batch syncing in background so API startup is not blocked.
     void autoAssignBatchesFromAreas().catch((e) => {
