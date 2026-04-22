@@ -76,11 +76,11 @@ export default function Layout() {
                   key={b.id}
                   type="button"
                   onClick={() => setActiveBatchId(b.id)}
-                  className={`max-w-[220px] truncate rounded-full px-3 py-1 text-xs font-medium ${
+                  className={`max-w-full rounded-full px-3 py-1.5 text-left text-xs font-medium leading-5 sm:max-w-[min(100%,32rem)] sm:text-right ${
                     activeBatchId === b.id
                       ? "bg-emerald-600 text-white"
                       : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                  }`}
+                  } whitespace-normal break-words`}
                   title={b.title}
                 >
                   {b.title} ({b.voter_count})

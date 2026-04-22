@@ -1,14 +1,10 @@
 import { Router } from "express";
-import multer from "multer";
 import * as XLSX from "xlsx";
 import { query, queryOne, runTransaction } from "../db.js";
 import type { VoterRow } from "../db.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { logAudit } from "../audit.js";
-import { parseVotedAt, parseVoterFromExcelRow, readVoterRowsFromBuffer } from "../excelVoters.js";
-import { autoAssignBatchesFromAreas, TEMP_IMPORT_BATCH_TITLE } from "../batchFromAreas.js";
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const r = Router();
 r.use(requireAuth);
 
@@ -28,19 +24,6 @@ function parseListStatusFilter(v: unknown): "pending" | "voted" | null {
   return null;
 }
 
-async function ensureTempImportBatchId(): Promise<number> {
-  const row = await queryOne<{ id: number }>(
-    "SELECT id FROM import_batches WHERE title = $1 LIMIT 1",
-    [TEMP_IMPORT_BATCH_TITLE]
-  );
-  if (row) return row.id;
-  const result = await queryOne<{ id: number }>(
-    "INSERT INTO import_batches (title) VALUES ($1) RETURNING id",
-    [TEMP_IMPORT_BATCH_TITLE]
-  );
-  return result?.id || 0;
-}
-
 function orderByForList(batchId: number | null): string {
   if (batchId) {
     return `(list_number IS NULL), list_number ASC, id ASC`;
@@ -51,7 +34,7 @@ function orderByForList(batchId: number | null): string {
 r.get("/search", async (req, res) => {
   try {
     const q = String(req.query.q ?? "").trim();
-    const min = 3;
+    const min = 1;
     const batchId = parseOptionalBatchId(req.query.batchId);
     if (q.length < min) {
       return res.json({ voters: [], message: `اكتب ${min} أحرف على الأقل للبحث المباشر` });
@@ -135,112 +118,6 @@ r.get("/export", async (req, res) => {
   }
 });
 
-r.post("/import", requireAdmin, upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file?.buffer) return res.status(400).json({ error: "لم يُرفع ملف" });
-    let batchId = Number(req.body?.batchId);
-    const useAutoBatch =
-      !Number.isFinite(batchId) || batchId < 1 || String(req.body?.batchId ?? "").trim() === "auto";
-    
-    if (useAutoBatch) {
-      batchId = await ensureTempImportBatchId();
-    } else {
-      const batchOk = await queryOne<{ id: number }>(
-        "SELECT id FROM import_batches WHERE id = $1",
-        [batchId]
-      );
-      if (!batchOk) return res.status(400).json({ error: "دفعة الاستيراد غير موجودة" });
-    }
-
-    let raw: Record<string, unknown>[];
-    try {
-      raw = readVoterRowsFromBuffer(req.file.buffer);
-    } catch {
-      return res.status(400).json({ error: "ملف Excel غير صالح" });
-    }
-    if (raw.length === 0) return res.status(400).json({ error: "الجدول فارغ" });
-
-    const { inserted, updated } = await runTransaction(async () => {
-      let inserted = 0;
-      let updated = 0;
-      for (const row of raw) {
-        const parsed = parseVoterFromExcelRow(row);
-        if (!parsed) continue;
-        const { full_name, national_id, area, list_number } = parsed;
-        const statusRaw = row["status"] ?? row["الحالة"];
-        let status: 0 | 1 = 0;
-        if (statusRaw === 1 || statusRaw === "1" || String(statusRaw).includes("تم")) status = 1;
-        const voted_at = status === 1 ? parseVotedAt(row["voted_at"] ?? row["وقت الانتخاب"]) : null;
-        
-        const exists = await queryOne<{ id: number }>(
-          "SELECT id FROM voters WHERE national_id = $1",
-          [national_id]
-        );
-        
-        await queryOne(
-          `INSERT INTO voters (full_name, national_id, status, voted_at, area, batch_id, list_number)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT(national_id) DO UPDATE SET
-             full_name = EXCLUDED.full_name,
-             area = EXCLUDED.area,
-             batch_id = EXCLUDED.batch_id,
-             list_number = EXCLUDED.list_number,
-             updated_at = CURRENT_TIMESTAMP`,
-          [full_name, national_id, status, voted_at, area, batchId, list_number]
-        );
-        
-        if (exists) updated++;
-        else inserted++;
-      }
-      return { inserted, updated };
-    });
-
-    logAudit(req.auth!.sub, "import", "voters", batchId, { rows: raw.length, inserted, updated });
-    try {
-      await autoAssignBatchesFromAreas();
-    } catch (syncErr) {
-      console.error("autoAssignBatchesFromAreas after import:", syncErr);
-    }
-    res.json({ ok: true, rowsRead: raw.length, inserted, updated, batchId });
-  } catch (err) {
-    console.error("import error:", err);
-    const msg = err instanceof Error ? err.message : "فشل الاستيراد";
-    res.status(400).json({ error: msg });
-  }
-});
-
-r.post("/sync-row-numbers", requireAdmin, upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file?.buffer) return res.status(400).json({ error: "لم يُرفع ملف" });
-    let raw: Record<string, unknown>[];
-    try {
-      raw = readVoterRowsFromBuffer(req.file.buffer);
-    } catch {
-      return res.status(400).json({ error: "ملف Excel غير صالح" });
-    }
-
-    let votersUpdated = 0;
-    await runTransaction(async () => {
-      for (const row of raw) {
-        const parsed = parseVoterFromExcelRow(row);
-        if (!parsed?.national_id || parsed.list_number == null) continue;
-        await queryOne(
-          "UPDATE voters SET list_number = $1, updated_at = CURRENT_TIMESTAMP WHERE national_id = $2",
-          [parsed.list_number, parsed.national_id]
-        );
-        votersUpdated++;
-      }
-    });
-
-    logAudit(req.auth!.sub, "sync_row_numbers", "voters", null, { rowsRead: raw.length, votersUpdated });
-    res.json({ ok: true, rowsRead: raw.length, votersUpdated });
-  } catch (err) {
-    console.error("sync-row-numbers error:", err);
-    const msg = err instanceof Error ? err.message : "فشل التحديث";
-    res.status(400).json({ error: msg });
-  }
-});
-
 r.get("/", async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
@@ -249,36 +126,41 @@ r.get("/", async (req, res) => {
     const q = String(req.query.q ?? "").trim();
     const batchId = parseOptionalBatchId(req.query.batchId);
     const statusF = parseListStatusFilter(req.query.status);
-    const statusSql = statusF === "pending" ? " AND status = 0" : statusF === "voted" ? " AND status = 1" : "";
-    const batchSql = batchId ? " AND batch_id = $1" : "";
     const ord = orderByForList(batchId);
 
     let list: VoterRow[];
     let total: number;
     
-    if (q.length >= 2) {
-      const like = `%${q.replace(/%/g, "")}%`;
-      const countParams: (string | number)[] = [like, like];
-      const listParams: (string | number)[] = [like, like];
+    if (q.length >= 1) {
+      const safe = q.replace(/%/g, "").replace(/_/g, "");
+      const compact = safe.replace(/\s+/g, "");
+      const like = `%${safe}%`;
+      const compactLike = `%${compact}%`;
+      const whereParts: string[] = [
+        "(full_name ILIKE $1 OR national_id ILIKE $2 OR full_name_nospace ILIKE $3 OR national_id_nospace ILIKE $4 OR COALESCE(area, '') ILIKE $5)",
+      ];
+      const whereParams: (string | number)[] = [like, like, compactLike, compactLike, like];
+      let paramIdx = 6;
       if (batchId) {
-        countParams.push(batchId);
-        listParams.push(batchId);
+        whereParts.push(`batch_id = $${paramIdx}`);
+        whereParams.push(batchId);
+        paramIdx++;
       }
-      countParams.push(batchId || 1, offset, pageSize);
-      listParams.push(pageSize, offset);
+      if (statusF === "pending") whereParts.push("status = 0");
+      if (statusF === "voted") whereParts.push("status = 1");
+      const whereSql = ` WHERE ${whereParts.join(" AND ")}`;
 
-      const countResult = await query<{ c: number }>(
-        `SELECT COUNT(*) as c FROM voters WHERE (full_name ILIKE $1 OR national_id ILIKE $2)${batchSql}${statusSql}`,
-        countParams.slice(0, countParams.length - 3)
-      );
+      const limitParam = paramIdx;
+      const offsetParam = paramIdx + 1;
+      const countSql = `SELECT COUNT(*)::int AS c FROM voters${whereSql}`;
+      const listSql = `SELECT ${VOTER_COLS} FROM voters${whereSql} ORDER BY ${ord} LIMIT $${limitParam} OFFSET $${offsetParam}`;
+
+      const [countResult, listResult] = await Promise.all([
+        query<{ c: number }>(countSql, whereParams),
+        query<VoterRow>(listSql, [...whereParams, pageSize, offset]),
+      ]);
       total = countResult[0]?.c || 0;
-
-      list = await query<VoterRow>(
-        `SELECT ${VOTER_COLS}
-         FROM voters WHERE (full_name ILIKE $1 OR national_id ILIKE $2)${batchSql}${statusSql}
-         ORDER BY ${ord} LIMIT $3 OFFSET $4`,
-        [...listParams.slice(0, listParams.length - 2), pageSize, offset]
-      );
+      list = listResult;
     } else {
       const countParams: (number | undefined)[] = [];
       const listParams: (number | undefined)[] = [];
@@ -295,16 +177,15 @@ r.get("/", async (req, res) => {
 
       const whereSql = whereParts.length ? ` WHERE ${whereParts.join(" AND ")}` : "";
 
-      const countResult = await query<{ c: number }>(
-        `SELECT COUNT(*) as c FROM voters${whereSql}`,
-        countParams
-      );
-      total = countResult[0]?.c || 0;
+      const countSql = `SELECT COUNT(*)::int AS c FROM voters${whereSql}`;
+      const listSql = `SELECT ${VOTER_COLS} FROM voters${whereSql} ORDER BY ${ord} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
 
-      list = await query<VoterRow>(
-        `SELECT ${VOTER_COLS} FROM voters${whereSql} ORDER BY ${ord} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
-        [...listParams, pageSize, offset]
-      );
+      const [countResult, listResult] = await Promise.all([
+        query<{ c: number }>(countSql, countParams),
+        query<VoterRow>(listSql, [...listParams, pageSize, offset]),
+      ]);
+      total = countResult[0]?.c || 0;
+      list = listResult;
     }
 
     res.json({ voters: list, total, page, pageSize });
@@ -417,21 +298,8 @@ r.patch("/:id", requireAdmin, async (req, res) => {
   }
 });
 
-r.delete("/:id", requireAdmin, async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرف غير صالح" });
-    
-    const cur = await queryOne<VoterRow>("SELECT * FROM voters WHERE id = $1", [id]);
-    if (!cur) return res.status(404).json({ error: "غير موجود" });
-    
-    await queryOne("DELETE FROM voters WHERE id = $1", [id]);
-    logAudit(req.auth!.sub, "delete", "voter", id, { national_id: cur.national_id });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("delete voter error:", err);
-    res.status(500).json({ error: "خطأ الخادم" });
-  }
+r.delete("/:id", requireAdmin, async (_req, res) => {
+  res.status(403).json({ error: "غير مسموح بحذف سجلات الناخبين" });
 });
 
 r.post("/:id/vote", async (req, res) => {
@@ -467,6 +335,35 @@ r.post("/:id/vote", async (req, res) => {
     res.json({ ok: true, voter: out.voter });
   } catch (err) {
     console.error("vote error:", err);
+    res.status(500).json({ error: "خطأ الخادم" });
+  }
+});
+
+r.patch("/:id/status", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "معرف غير صالح" });
+
+    const current = await queryOne<VoterRow>("SELECT * FROM voters WHERE id = $1", [id]);
+    if (!current) return res.status(404).json({ error: "غير موجود" });
+
+    const input = Number((req.body as { status?: number }).status);
+    if (input !== 0 && input !== 1) return res.status(400).json({ error: "الحالة يجب أن تكون 0 أو 1" });
+    const status: 0 | 1 = input === 1 ? 1 : 0;
+    const votedAt = status === 1 ? new Date().toISOString() : null;
+
+    const updated = await queryOne<VoterRow>(
+      `UPDATE voters
+       SET status = $1, voted_at = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING *`,
+      [status, votedAt, id]
+    );
+
+    logAudit(req.auth!.sub, status === 1 ? "vote" : "unvote", "voter", id, { national_id: current.national_id });
+    res.json({ ok: true, voter: updated });
+  } catch (err) {
+    console.error("set status error:", err);
     res.status(500).json({ error: "خطأ الخادم" });
   }
 });

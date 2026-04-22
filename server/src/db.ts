@@ -2,6 +2,7 @@ import pkg from "pg";
 import bcrypt from "bcryptjs";
 import { runMigrations } from "./migrate.js";
 import { autoAssignBatchesFromAreas } from "./batchFromAreas.js";
+import { runBundledVotersSeed } from "./bundledVotersSeed.js";
 
 const { Pool } = pkg;
 
@@ -104,6 +105,8 @@ export async function initSchema() {
     `);
 
     await runMigrations();
+
+    await runBundledVotersSeed();
 
     // Run area-to-batch syncing in background so API startup is not blocked.
     void autoAssignBatchesFromAreas().catch((e) => {

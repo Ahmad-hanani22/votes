@@ -64,7 +64,7 @@ export function BatchScopeProvider({ children }: { children: ReactNode }) {
     void refreshBatches();
     const id = window.setInterval(() => {
       void refreshBatches();
-    }, 8000);
+    }, 30000);
     return () => window.clearInterval(id);
   }, [refreshBatches]);
 

@@ -10,6 +10,5 @@
     "esModuleInterop": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["src/**/*_old.ts"]
+  "include": ["src/**/*"]
 }

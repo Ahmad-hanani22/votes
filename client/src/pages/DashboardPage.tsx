@@ -92,7 +92,15 @@ export default function DashboardPage() {
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
           <h2 className="mb-3 text-lg font-semibold text-white">المدارس</h2>
           <div className="overflow-x-auto rounded-lg border border-slate-800">
-            <table className="min-w-full text-right text-sm">
+            <table className="min-w-full table-fixed text-right text-sm">
+              <colgroup>
+                <col className="w-[48%] sm:w-[52%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[10%]" />
+                <col className="w-[8%]" />
+                <col className="w-[14%] sm:w-[10%]" />
+              </colgroup>
               <thead className="bg-slate-900 text-slate-400">
                 <tr>
                   <th className="px-3 py-2">الدفعة</th>
@@ -106,7 +114,7 @@ export default function DashboardPage() {
               <tbody>
                 {stats.byBatch.map((b) => (
                   <tr key={b.batchId} className="border-t border-slate-800/80">
-                    <td className="px-3 py-2 font-medium text-white">{b.title}</td>
+                    <td className="px-3 py-2 font-medium leading-6 text-white whitespace-normal break-words">{b.title}</td>
                     <td className="px-3 py-2">{b.total}</td>
                     <td className="px-3 py-2 text-emerald-300">{b.voted}</td>
                     <td className="px-3 py-2 text-slate-300">{b.pending}</td>

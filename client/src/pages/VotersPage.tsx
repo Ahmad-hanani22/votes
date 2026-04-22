@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import axios from "axios";
 import api from "../api/client";
-import { useAuth } from "../auth/AuthContext";
 import { useBatchScope } from "../scope/BatchScopeContext";
 import { useBatchIdFromUrl } from "../scope/useBatchIdFromUrl";
 import type { Voter } from "../types";
@@ -8,10 +8,8 @@ import type { Voter } from "../types";
 type ListStatusFilter = "all" | "pending" | "voted";
 
 export default function VotersPage() {
-  const { user } = useAuth();
   const { activeBatchId, activeLabel } = useBatchScope();
   useBatchIdFromUrl();
-  const isAdmin = user?.role === "admin";
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<ListStatusFilter>("all");
   const [page, setPage] = useState(1);
@@ -19,47 +17,80 @@ export default function VotersPage() {
   const [rows, setRows] = useState<Voter[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const listAbortRef = useRef<AbortController | null>(null);
+  const loadGenerationRef = useRef(0);
+  const qRef = useRef(q);
+  const pageRef = useRef(page);
+  /** يمنع طلبًا مزدوجًا عند الكتابة مع إعادة الصفحة إلى 1 */
+  const skipNextScopeEffectFetch = useRef(false);
+  qRef.current = q;
+  pageRef.current = page;
   const pageSize = 25;
 
-  const load = useCallback(
-    async (opts?: { silent?: boolean }) => {
+  /** جلب القائمة: مرّر `queryText` / `pageNum` من onChange حتى ما نستنى دورة React */
+  const fetchList = useCallback(
+    async (opts?: { silent?: boolean; soft?: boolean; queryText?: string; pageNum?: number }) => {
       const silent = opts?.silent === true;
+      const soft = opts?.soft === true;
+      const qParam = (opts?.queryText !== undefined ? opts.queryText : qRef.current).trim();
+      const pageParam = opts?.pageNum ?? pageRef.current;
+      loadGenerationRef.current += 1;
+      const loadId = loadGenerationRef.current;
       if (!silent) {
-        setLoading(true);
-        setMsg(null);
+        setLoading(soft ? false : true);
+        if (!soft) setMsg(null);
+      }
+      const ac = new AbortController();
+      if (!silent) {
+        if (listAbortRef.current) listAbortRef.current.abort();
+        listAbortRef.current = ac;
       }
       try {
         const { data } = await api.get<{ voters: Voter[]; total: number }>("/voters", {
           params: {
-            page,
+            page: pageParam,
             pageSize,
-            q: q.trim() || undefined,
+            q: qParam || undefined,
             batchId: activeBatchId ?? undefined,
             status: statusFilter === "all" ? undefined : statusFilter,
           },
+          signal: ac.signal,
         });
+        if (loadId !== loadGenerationRef.current) return;
         setRows(data.voters);
         setTotal(data.total);
-      } catch {
-        if (!silent) setMsg("تعذر تحميل القائمة");
+      } catch (e: unknown) {
+        if (axios.isCancel(e)) {
+          // ignore
+        } else {
+          if (!silent) setMsg("تعذر تحميل القائمة");
+        }
       } finally {
-        if (!silent) setLoading(false);
+        if (!silent && loadId === loadGenerationRef.current) {
+          setLoading(false);
+        }
       }
     },
-    [page, q, activeBatchId, statusFilter]
+    [activeBatchId, statusFilter]
   );
 
   useEffect(() => {
-    const t = setTimeout(() => void load(), q ? 300 : 0);
-    return () => clearTimeout(t);
-  }, [load, q]);
+    if (skipNextScopeEffectFetch.current) {
+      skipNextScopeEffectFetch.current = false;
+      return;
+    }
+    void fetchList({ soft: qRef.current.trim().length > 0 });
+  }, [fetchList, page, statusFilter, activeBatchId]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
-      if (document.visibilityState === "visible") void load({ silent: true });
-    }, 5000);
+      if (document.visibilityState !== "visible") return;
+      if (qRef.current.trim() !== "") return;
+      void fetchList({ silent: true });
+    }, 20000);
     return () => window.clearInterval(id);
-  }, [load]);
+  }, [fetchList]);
 
   async function onExport() {
     const res = await api.get("/voters/export", {
@@ -72,6 +103,29 @@ export default function VotersPage() {
     a.download = activeBatchId ? `voters-batch-${activeBatchId}.xlsx` : "voters-export.xlsx";
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function setVoterStatus(voterId: number, status: 0 | 1) {
+    setBusyId(voterId);
+    setMsg(null);
+    try {
+      await api.patch(`/voters/${voterId}/status`, { status });
+      setRows((prev) =>
+        prev.map((v) =>
+          v.id === voterId
+            ? {
+                ...v,
+                status,
+                voted_at: status === 1 ? new Date().toISOString() : null,
+              }
+            : v
+        )
+      );
+    } catch {
+      setMsg("تعذر تحديث حالة الناخب");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -96,12 +150,16 @@ export default function VotersPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <input
-          placeholder="بحث بالاسم أو رمز الناخب…"
+          placeholder="بحث ذكي بالاسم أو الرمز أو المركز أو رقم التسلسل…"
           className="min-w-[200px] flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-white outline-none ring-sky-500 focus:ring-2"
           value={q}
           onChange={(e) => {
+            const v = e.target.value;
+            if (pageRef.current !== 1) skipNextScopeEffectFetch.current = true;
             setPage(1);
-            setQ(e.target.value);
+            pageRef.current = 1;
+            setQ(v);
+            void fetchList({ soft: true, queryText: v, pageNum: 1 });
           }}
         />
         <span className="text-xs text-slate-500">الحالة:</span>
@@ -128,9 +186,9 @@ export default function VotersPage() {
         ))}
       </div>
       {msg && <p className="text-sm text-sky-300">{msg}</p>}
-      {loading ? (
-        <p className="text-slate-400">جاري التحميل…</p>
-      ) : (
+      {loading && rows.length === 0 ? <p className="text-slate-400">جاري التحميل…</p> : null}
+
+      {!(loading && rows.length === 0) && (
         <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/98">
           <table className="min-w-full text-right text-sm">
             <thead className="bg-slate-900 text-slate-400">
@@ -141,20 +199,25 @@ export default function VotersPage() {
                 <th className="px-3 py-2">مركز التسجيل والاقتراع</th>
                 <th className="px-3 py-2">الحالة</th>
                 <th className="px-3 py-2">وقت الانتخاب</th>
-                {isAdmin && <th className="px-3 py-2">إجراءات</th>}
+                <th className="px-3 py-2">إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((v) => (
-                <tr key={v.id} className="border-t border-slate-800/80 bg-slate-950/80">
+                <tr
+                  key={v.id}
+                  className={`border-t border-slate-800/80 ${v.status === 1 ? "bg-emerald-950/20" : "bg-slate-950/80"}`}
+                >
                   <td className="px-3 py-2 font-mono text-slate-200" dir="ltr">
                     {v.list_number != null ? v.list_number : "—"}
                   </td>
-                  <td className="px-3 py-2 font-medium text-white">{v.full_name}</td>
+                  <td className={`px-3 py-2 font-medium ${v.status === 1 ? "text-emerald-300" : "text-white"}`}>{v.full_name}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-300" dir="ltr">
                     {v.national_id}
                   </td>
-                  <td className="px-3 py-2 text-slate-300">{v.area ?? "—"}</td>
+                  <td className="px-3 py-2 text-slate-300 whitespace-normal break-words leading-6 min-w-[12rem] max-w-[28rem]">
+                    {v.area ?? "—"}
+                  </td>
                   <td className="px-3 py-2">
                     {v.status === 1 ? (
                       <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">تم</span>
@@ -165,11 +228,9 @@ export default function VotersPage() {
                   <td className="px-3 py-2 text-xs text-slate-400" dir="ltr">
                     {v.voted_at ? new Date(v.voted_at).toLocaleString("ar-EG") : "—"}
                   </td>
-                  {isAdmin && (
-                    <td className="px-3 py-2">
-                      <RowActions voter={v} onChanged={load} />
-                    </td>
-                  )}
+                  <td className="px-3 py-2">
+                    <StatusActions voter={v} busy={busyId === v.id} onChange={setVoterStatus} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -205,167 +266,41 @@ export default function VotersPage() {
   );
 }
 
-function RowActions({ voter, onChanged }: { voter: Voter; onChanged: () => void }) {
-  const [open, setOpen] = useState(false);
-  async function remove() {
-    if (!confirm("حذف هذا الناخب؟")) return;
-    await api.delete(`/voters/${voter.id}`);
-    onChanged();
-  }
+function StatusActions({
+  voter,
+  busy,
+  onChange,
+}: {
+  voter: Voter;
+  busy: boolean;
+  onChange: (voterId: number, status: 0 | 1) => Promise<void>;
+}) {
   return (
     <div className="flex gap-2">
-      <button type="button" className="text-sky-400 hover:underline" onClick={() => setOpen(true)}>
-        تعديل
-      </button>
-      <button type="button" className="text-rose-400 hover:underline" onClick={remove}>
-        حذف
-      </button>
-      {open && <EditModal voter={voter} onClose={() => setOpen(false)} onSaved={onChanged} />}
-    </div>
-  );
-}
-
-function EditModal({
-  voter,
-  defaultBatchId,
-  onClose,
-  onSaved,
-}: {
-  voter: Voter | null;
-  defaultBatchId?: number | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { batches } = useBatchScope();
-  const [full_name, setFullName] = useState(voter?.full_name ?? "");
-  const [national_id, setNationalId] = useState(voter?.national_id ?? "");
-  const [area, setArea] = useState(voter?.area ?? "");
-  const [list_number, setListNumber] = useState(voter?.list_number != null ? String(voter.list_number) : "");
-  const [batch_id, setBatchId] = useState<number | null>(
-    voter?.batch_id ?? (defaultBatchId != null && defaultBatchId > 0 ? defaultBatchId : null)
-  );
-  const [status, setStatus] = useState<0 | 1>(voter?.status ?? 0);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function save() {
-    setBusy(true);
-    setErr(null);
-    try {
-      const listPayload =
-        list_number.trim() === "" || !Number.isFinite(Number(list_number))
-          ? null
-          : Math.trunc(Number(list_number));
-      if (voter) {
-        await api.patch(`/voters/${voter.id}`, {
-          full_name,
-          national_id,
-          area,
-          status,
-          list_number: listPayload,
-          batch_id,
-        });
-      } else {
-        await api.post("/voters", {
-          full_name,
-          national_id,
-          area,
-          batch_id: batch_id ?? undefined,
-          list_number: listPayload ?? undefined,
-        });
-      }
-      onSaved();
-      onClose();
-    } catch {
-      setErr("تعذر الحفظ (تحقق من عدم تكرار الرمز أو اختيار دفعة صحيحة)");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void onChange(voter.id, 1)}
+        className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-all disabled:opacity-40 ${
+          voter.status === 1
+            ? "border-emerald-400 bg-emerald-500 text-white shadow-[0_0_0_1px_rgba(52,211,153,.5)]"
+            : "border-emerald-700/70 bg-emerald-900/30 text-emerald-300 hover:bg-emerald-700/60 hover:text-white"
+        }`}
       >
-        <h3 className="text-lg font-semibold text-white">{voter ? "تعديل ناخب" : "ناخب جديد"}</h3>
-        <div className="mt-4 space-y-3">
-          <Field label="الاسم الكامل" value={full_name} onChange={setFullName} />
-          <Field label="رمز الناخب" value={national_id} onChange={setNationalId} dir="ltr" />
-          <Field label="مركز التسجيل والاقتراع" value={area ?? ""} onChange={setArea} />
-          <Field label="# من الملف (اختياري)" value={list_number} onChange={setListNumber} dir="ltr" />
-          <div>
-            <label className="text-sm text-slate-400">الدفعة</label>
-            <select
-              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white"
-              value={batch_id ?? ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                setBatchId(v === "" ? null : Number(v));
-              }}
-            >
-              <option value="">بدون دفعة</option>
-              {batches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.title}
-                </option>
-              ))}
-            </select>
-          </div>
-          {voter && (
-            <div>
-              <label className="text-sm text-slate-400">الحالة</label>
-              <select
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white"
-                value={status}
-                onChange={(e) => setStatus(Number(e.target.value) as 0 | 1)}
-              >
-                <option value={0}>لم ينتخب</option>
-                <option value={1}>تم الانتخاب</option>
-              </select>
-            </div>
-          )}
-        </div>
-        {err && <p className="mt-2 text-sm text-rose-400">{err}</p>}
-        <div className="mt-6 flex justify-end gap-2">
-          <button type="button" className="rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800" onClick={onClose}>
-            إلغاء
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={save}
-            className="rounded-lg bg-sky-600 px-4 py-2 font-medium text-white hover:bg-sky-500 disabled:opacity-50"
-          >
-            حفظ
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  dir,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  dir?: "ltr";
-}) {
-  return (
-    <div>
-      <label className="text-sm text-slate-400">{label}</label>
-      <input
-        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none ring-sky-500 focus:ring-2"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        dir={dir}
-      />
+        انتخب
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void onChange(voter.id, 0)}
+        className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-all disabled:opacity-40 ${
+          voter.status === 0
+            ? "border-rose-400 bg-rose-500 text-white shadow-[0_0_0_1px_rgba(251,113,133,.55)]"
+            : "border-rose-800/70 bg-rose-950/40 text-rose-300 hover:bg-rose-700/60 hover:text-white"
+        }`}
+      >
+        لم ينتخب
+      </button>
     </div>
   );
 }
