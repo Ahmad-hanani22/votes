@@ -44,7 +44,8 @@ export default function DashboardPage() {
   if (!stats) return <p className="text-slate-400">جاري تحميل لوحة التحكم…</p>;
 
   const familyChartData = stats.byFamily.map((f) => ({
-    name: f.family.length > 10 ? `${f.family.slice(0, 10)}…` : f.family,
+    name: f.family,
+    shortName: f.family.length > 12 ? `${f.family.slice(0, 12)}…` : f.family,
     fullName: f.family,
     value: f.voted,
   }));
@@ -52,6 +53,7 @@ export default function DashboardPage() {
     activeBatchId === null && stats.byBatch
       ? stats.byBatch.slice(0, 8).map((b) => ({
           name: b.title,
+          shortName: b.title.length > 20 ? `${b.title.slice(0, 20)}…` : b.title,
           fullName: b.title,
           voted: b.voted,
         }))
@@ -147,7 +149,7 @@ export default function DashboardPage() {
           </div>
           <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
             <h3 className="mb-2 text-sm font-semibold text-slate-300">الرسم البياني للمدارس (عدد من انتخبوا)</h3>
-            <div className="h-72 w-full" dir="ltr">
+            <div className="hidden h-72 w-full sm:block" dir="ltr">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={batchChartData} margin={{ top: 8, right: 8, left: 0, bottom: 42 }}>
                   <XAxis
@@ -169,6 +171,33 @@ export default function DashboardPage() {
                       <Cell key={`school-cell-${entry.name}-${i}`} fill={schoolColors[i % schoolColors.length]} />
                     ))}
                     <LabelList dataKey="voted" position="top" style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="h-[300px] w-full sm:hidden" dir="ltr">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={batchChartData} layout="vertical" margin={{ top: 8, right: 10, left: 10, bottom: 6 }}>
+                  <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="shortName"
+                    width={128}
+                    interval={0}
+                    tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                  />
+                  <Tooltip
+                    formatter={(value) => [value, "عدد من انتخبوا"]}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
+                    labelStyle={{ color: "#ffffff" }}
+                    itemStyle={{ color: "#86efac" }}
+                  />
+                  <Bar dataKey="voted" radius={[0, 6, 6, 0]}>
+                    {batchChartData.map((entry, i) => (
+                      <Cell key={`school-mobile-cell-${entry.shortName}-${i}`} fill={schoolColors[i % schoolColors.length]} />
+                    ))}
+                    <LabelList dataKey="voted" position="right" style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -212,7 +241,7 @@ export default function DashboardPage() {
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
               <h3 className="mb-2 text-sm font-semibold text-slate-300">الرسم البياني للعائلات (عدد من انتخبوا)</h3>
-              <div className="h-72 w-full" dir="ltr">
+              <div className="hidden h-72 w-full sm:block" dir="ltr">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={familyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 20 }}>
                     <XAxis dataKey="name" tick={{ fill: "#cbd5e1", fontSize: 12 }} interval={0} />
@@ -230,6 +259,33 @@ export default function DashboardPage() {
                         <Cell key={`family-cell-${entry.name}-${i}`} fill={familyColors[i % familyColors.length]} />
                       ))}
                       <LabelList dataKey="value" position="top" style={{ fill: "#86efac", fontSize: 12, fontWeight: 700 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="h-[320px] w-full sm:hidden" dir="ltr">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={familyChartData} layout="vertical" margin={{ top: 8, right: 10, left: 10, bottom: 6 }}>
+                    <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="shortName"
+                      width={95}
+                      interval={0}
+                      tick={{ fill: "#cbd5e1", fontSize: 11 }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [`${value}`, "عدد من انتخبوا"]}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                      contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
+                      labelStyle={{ color: "#ffffff" }}
+                      itemStyle={{ color: "#86efac" }}
+                    />
+                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                      {familyChartData.map((entry, i) => (
+                        <Cell key={`family-mobile-cell-${entry.shortName}-${i}`} fill={familyColors[i % familyColors.length]} />
+                      ))}
+                      <LabelList dataKey="value" position="right" style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
