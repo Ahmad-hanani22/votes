@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import api from "../api/client";
 import { useBatchScope } from "../scope/BatchScopeContext";
 import { useBatchIdFromUrl } from "../scope/useBatchIdFromUrl";
@@ -43,11 +43,21 @@ export default function DashboardPage() {
   if (err && !stats) return <p className="text-rose-400">{err}</p>;
   if (!stats) return <p className="text-slate-400">جاري تحميل لوحة التحكم…</p>;
 
-  const chartData = stats.byArea.slice(0, 12).map((a) => ({
-    name: a.area.length > 14 ? `${a.area.slice(0, 14)}…` : a.area,
-    انتخب: a.voted,
-    متبقي: a.pending,
+  const familyChartData = stats.byFamily.map((f) => ({
+    name: f.family.length > 10 ? `${f.family.slice(0, 10)}…` : f.family,
+    fullName: f.family,
+    value: f.voted,
   }));
+  const batchChartData =
+    activeBatchId === null && stats.byBatch
+      ? stats.byBatch.slice(0, 8).map((b) => ({
+          name: b.title,
+          fullName: b.title,
+          voted: b.voted,
+        }))
+      : [];
+  const familyColors = ["#22c55e", "#06b6d4", "#6366f1", "#f59e0b", "#ec4899", "#64748b"];
+  const schoolColors = ["#38bdf8", "#22c55e", "#a78bfa", "#f59e0b", "#ec4899", "#14b8a6", "#64748b", "#60a5fa"];
 
   return (
     <div className="space-y-6">
@@ -135,33 +145,128 @@ export default function DashboardPage() {
               </tbody>
             </table>
           </div>
+          <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+            <h3 className="mb-2 text-sm font-semibold text-slate-300">الرسم البياني للمدارس (عدد من انتخبوا)</h3>
+            <div className="h-72 w-full" dir="ltr">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={batchChartData} margin={{ top: 8, right: 8, left: 0, bottom: 42 }}>
+                  <XAxis
+                    dataKey="name"
+                    interval={0}
+                    height={74}
+                    tick={(props) => <WrappedAxisTick {...props} />}
+                  />
+                  <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip
+                    formatter={(value) => [value, "عدد من انتخبوا"]}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
+                    labelStyle={{ color: "#ffffff" }}
+                    itemStyle={{ color: "#86efac" }}
+                  />
+                  <Bar dataKey="voted" radius={[6, 6, 0, 0]}>
+                    {batchChartData.map((entry, i) => (
+                      <Cell key={`school-cell-${entry.name}-${i}`} fill={schoolColors[i % schoolColors.length]} />
+                    ))}
+                    <LabelList dataKey="voted" position="top" style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
       )}
 
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-        <h2 className="mb-4 text-lg font-semibold text-white">
-          {activeBatchId != null ? "التوزيع حسب المركز" : "التوزيع حسب مركز التسجيل والاقتراع"}
-        </h2>
-        {chartData.length === 0 ? (
-          <p className="text-slate-500">لا توجد بيانات مراكز في هذا النطاق.</p>
+        <h2 className="mb-3 text-lg font-semibold text-white">إحصائيات العائلات (من انتخبوا)</h2>
+        {stats.byFamily.length === 0 ? (
+          <p className="text-slate-500">لا توجد بيانات عائلات في هذا النطاق.</p>
         ) : (
-          <div className="h-72 w-full" dir="ltr">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
-                  labelStyle={{ color: "#e2e8f0" }}
-                />
-                <Bar dataKey="انتخب" stackId="a" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="متبقي" stackId="a" fill="#334155" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="overflow-x-auto rounded-lg border border-slate-800">
+              <table className="min-w-full table-fixed text-right text-sm">
+                <colgroup>
+                  <col className="w-[50%]" />
+                  <col className="w-[25%]" />
+                  <col className="w-[25%]" />
+                </colgroup>
+                <thead className="bg-slate-900 text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2">العائلة</th>
+                    <th className="px-3 py-2">عدد من انتخبوا</th>
+                    <th className="px-3 py-2">النسبة من المصوّتين</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.byFamily.map((f) => (
+                    <tr key={f.family} className="border-t border-slate-800/80">
+                      <td className="px-3 py-2 font-medium text-white">{f.family}</td>
+                      <td className="px-3 py-2 font-semibold text-emerald-300">{f.voted}</td>
+                      <td className="px-3 py-2" dir="ltr">
+                        {f.percent}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+              <h3 className="mb-2 text-sm font-semibold text-slate-300">الرسم البياني للعائلات (عدد من انتخبوا)</h3>
+              <div className="h-72 w-full" dir="ltr">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={familyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 20 }}>
+                    <XAxis dataKey="name" tick={{ fill: "#cbd5e1", fontSize: 12 }} interval={0} />
+                    <YAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip
+                      formatter={(value) => [`${value}`, "عدد من انتخبوا"]}
+                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                      contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
+                      labelStyle={{ color: "#ffffff" }}
+                      itemStyle={{ color: "#86efac" }}
+                      cursor={{ fill: "rgba(148, 163, 184, 0.16)" }}
+                    />
+                    <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                      {familyChartData.map((entry, i) => (
+                        <Cell key={`family-cell-${entry.name}-${i}`} fill={familyColors[i % familyColors.length]} />
+                      ))}
+                      <LabelList dataKey="value" position="top" style={{ fill: "#86efac", fontSize: 12, fontWeight: 700 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function WrappedAxisTick(props: { x?: number; y?: number; payload?: { value?: string | number } }) {
+  const x = props.x ?? 0;
+  const y = props.y ?? 0;
+  const raw = String(props.payload?.value ?? "").trim();
+  const words = raw.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+
+  for (let i = 0; i < words.length; i += 2) {
+    lines.push(words.slice(i, i + 2).join(" "));
+  }
+
+  const maxLines = 3;
+  const shown = lines.slice(0, maxLines);
+  if (lines.length > maxLines && shown.length > 0) shown[shown.length - 1] = `${shown[shown.length - 1]}…`;
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text textAnchor="middle" fill="#cbd5e1" fontSize={11}>
+        {shown.map((line, idx) => (
+          <tspan key={`${line}-${idx}`} x={0} dy={idx === 0 ? 14 : 13}>
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </g>
   );
 }
 

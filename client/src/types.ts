@@ -18,6 +18,7 @@ export type DashboardStats = {
   pending: number;
   percentVoted: number;
   byArea: { area: string; total: number; voted: number; pending: number; percent: number }[];
+  byFamily: { family: string; voted: number; percent: number }[];
   /** عند عرض «الكل» — إحصائيات لكل دفعة Excel (مدرسة / ملف) */
   byBatch?: {
     batchId: number;

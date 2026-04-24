@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import EngineerSignature from "../components/EngineerSignature";
 
 export default function LoginPage() {
   const { user, login, loading } = useAuth();
@@ -25,7 +26,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4">
+    <div className="relative flex min-h-screen items-center justify-center px-4 pb-16">
       <div className="pointer-events-none fixed inset-0 -z-10 keffiyeh-bg" aria-hidden />
       <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/95 p-8 shadow-xl shadow-sky-900/20 backdrop-blur-sm">
         <h1 className="text-center text-2xl font-bold text-white">تسجيل الدخول</h1>
@@ -60,6 +61,9 @@ export default function LoginPage() {
             {busy ? "جاري الدخول…" : "دخول"}
           </button>
         </form>
+      </div>
+      <div className="pointer-events-none absolute inset-x-0 bottom-5 flex justify-center">
+        <EngineerSignature />
       </div>
     </div>
   );

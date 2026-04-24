@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useBatchScope } from "../scope/BatchScopeContext";
+import EngineerSignature from "./EngineerSignature";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `rounded-lg px-3 py-2 text-sm font-medium transition ${
@@ -119,6 +120,11 @@ export default function Layout() {
             <Outlet />
           </div>
         </main>
+        <footer className="mx-auto w-full max-w-6xl px-4 pb-5">
+          <div className="flex justify-center">
+            <EngineerSignature compact />
+          </div>
+        </footer>
       </div>
     </div>
   );
