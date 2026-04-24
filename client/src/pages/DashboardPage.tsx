@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import api from "../api/client";
 import { useBatchScope } from "../scope/BatchScopeContext";
 import { useBatchIdFromUrl } from "../scope/useBatchIdFromUrl";
@@ -177,23 +177,10 @@ export default function DashboardPage() {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="w-full overflow-y-auto sm:hidden" dir="ltr">
-              <div style={{ height: mobileSchoolChartHeight }}>
+            <div className="w-full sm:hidden" dir="ltr">
+              <div style={{ height: Math.max(280, mobileSchoolChartHeight) }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={batchChartData} layout="vertical" margin={{ top: 8, right: 24, left: 12, bottom: 6 }}>
-                    <XAxis
-                      type="number"
-                      tick={{ fill: "#94a3b8", fontSize: 11 }}
-                      allowDecimals={false}
-                      tickFormatter={(v) => Number(v).toLocaleString("en-US")}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="shortName"
-                      width={112}
-                      interval={0}
-                      tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                    />
+                  <PieChart margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
                     <Tooltip
                       formatter={(value) => [Number(value).toLocaleString("en-US"), "عدد من انتخبوا"]}
                       labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
@@ -201,19 +188,37 @@ export default function DashboardPage() {
                       labelStyle={{ color: "#ffffff" }}
                       itemStyle={{ color: "#86efac" }}
                     />
-                    <Bar dataKey="voted" radius={[0, 6, 6, 0]} barSize={24}>
+                    <Pie
+                      data={batchChartData}
+                      dataKey="voted"
+                      nameKey="shortName"
+                      cx="50%"
+                      cy="42%"
+                      outerRadius={84}
+                      innerRadius={40}
+                      paddingAngle={2}
+                      labelLine={false}
+                    >
                       {batchChartData.map((entry, i) => (
                         <Cell key={`school-mobile-cell-${entry.shortName}-${i}`} fill={schoolColors[i % schoolColors.length]} />
                       ))}
-                      <LabelList
-                        dataKey="voted"
-                        position="right"
-                        formatter={(v: number) => Number(v).toLocaleString("en-US")}
-                        style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }}
-                      />
-                    </Bar>
-                  </BarChart>
+                    </Pie>
+                  </PieChart>
                 </ResponsiveContainer>
+                <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-slate-300">
+                  {batchChartData.map((entry, i) => (
+                    <div key={`school-mobile-legend-${entry.shortName}-${i}`} className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: schoolColors[i % schoolColors.length] }}
+                        />
+                        <span className="truncate">{entry.shortName}</span>
+                      </div>
+                      <span className="font-semibold text-emerald-300">{entry.voted.toLocaleString("en-US")}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -277,23 +282,10 @@ export default function DashboardPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <div className="w-full overflow-y-auto sm:hidden" dir="ltr">
-                <div style={{ height: mobileFamilyChartHeight }}>
+              <div className="w-full sm:hidden" dir="ltr">
+                <div style={{ height: Math.max(280, mobileFamilyChartHeight) }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={familyChartData} layout="vertical" margin={{ top: 8, right: 24, left: 10, bottom: 6 }}>
-                      <XAxis
-                        type="number"
-                        tick={{ fill: "#94a3b8", fontSize: 11 }}
-                        allowDecimals={false}
-                        tickFormatter={(v) => Number(v).toLocaleString("en-US")}
-                      />
-                      <YAxis
-                        type="category"
-                        dataKey="shortName"
-                        width={95}
-                        interval={0}
-                        tick={{ fill: "#cbd5e1", fontSize: 11 }}
-                      />
+                    <PieChart margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
                       <Tooltip
                         formatter={(value) => [Number(value).toLocaleString("en-US"), "عدد من انتخبوا"]}
                         labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
@@ -301,19 +293,37 @@ export default function DashboardPage() {
                         labelStyle={{ color: "#ffffff" }}
                         itemStyle={{ color: "#86efac" }}
                       />
-                      <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={22}>
+                      <Pie
+                        data={familyChartData}
+                        dataKey="value"
+                        nameKey="shortName"
+                        cx="50%"
+                        cy="42%"
+                        outerRadius={84}
+                        innerRadius={40}
+                        paddingAngle={2}
+                        labelLine={false}
+                      >
                         {familyChartData.map((entry, i) => (
                           <Cell key={`family-mobile-cell-${entry.shortName}-${i}`} fill={familyColors[i % familyColors.length]} />
                         ))}
-                        <LabelList
-                          dataKey="value"
-                          position="right"
-                          formatter={(v: number) => Number(v).toLocaleString("en-US")}
-                          style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }}
-                        />
-                      </Bar>
-                    </BarChart>
+                      </Pie>
+                    </PieChart>
                   </ResponsiveContainer>
+                  <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-slate-300">
+                    {familyChartData.map((entry, i) => (
+                      <div key={`family-mobile-legend-${entry.shortName}-${i}`} className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="inline-block h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: familyColors[i % familyColors.length] }}
+                          />
+                          <span className="truncate">{entry.shortName}</span>
+                        </div>
+                        <span className="font-semibold text-emerald-300">{entry.value.toLocaleString("en-US")}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
