@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Bar, BarChart, Cell, LabelList, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import api from "../api/client";
 import { useBatchScope } from "../scope/BatchScopeContext";
 import { useBatchIdFromUrl } from "../scope/useBatchIdFromUrl";
@@ -43,25 +43,23 @@ export default function DashboardPage() {
   if (err && !stats) return <p className="text-rose-400">{err}</p>;
   if (!stats) return <p className="text-slate-400">جاري تحميل لوحة التحكم…</p>;
 
-  const familyChartData = stats.byFamily.map((f) => ({
+  const familyChartData = stats.byFamily.map((f, i) => ({
+    slot: i + 1,
     name: f.family,
-    shortName: toMobileShortLabel(f.family, 9),
-    fullName: f.family,
     value: f.voted,
   }));
   const batchChartData =
     activeBatchId === null && stats.byBatch
-      ? stats.byBatch.slice(0, 8).map((b) => ({
+      ? stats.byBatch.slice(0, 8).map((b, i) => ({
+          slot: i + 1,
           name: b.title,
-          shortName: toMobileShortLabel(b.title, 16),
-          fullName: b.title,
           voted: b.voted,
         }))
       : [];
   const familyColors = ["#22c55e", "#06b6d4", "#6366f1", "#f59e0b", "#ec4899", "#64748b"];
   const schoolColors = ["#38bdf8", "#22c55e", "#a78bfa", "#f59e0b", "#ec4899", "#14b8a6", "#64748b", "#60a5fa"];
-  const mobileSchoolChartHeight = Math.max(260, batchChartData.length * 56);
-  const mobileFamilyChartHeight = Math.max(260, familyChartData.length * 50);
+  const schoolMaxY = getDynamicAxisMax(batchChartData.map((x) => x.voted));
+  const familyMaxY = getDynamicAxisMax(familyChartData.map((x) => x.value));
 
   return (
     <div className="space-y-6">
@@ -151,75 +149,51 @@ export default function DashboardPage() {
           </div>
           <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
             <h3 className="mb-2 text-sm font-semibold text-slate-300">الرسم البياني للمدارس (عدد من انتخبوا)</h3>
-            <div className="hidden h-72 w-full sm:block" dir="ltr">
+            <div className="h-72 w-full" dir="ltr">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={batchChartData} margin={{ top: 8, right: 8, left: 0, bottom: 42 }}>
-                  <XAxis
-                    dataKey="name"
-                    interval={0}
-                    height={74}
-                    tick={(props) => <WrappedAxisTick {...props} />}
+                <BarChart data={batchChartData} margin={{ top: 8, right: 10, left: 0, bottom: 18 }}>
+                  <XAxis dataKey="slot" tick={{ fill: "#cbd5e1", fontSize: 11 }} />
+                  <YAxis
+                    tick={{ fill: "#94a3b8", fontSize: 11 }}
+                    allowDecimals={false}
+                    domain={[0, schoolMaxY]}
+                    tickFormatter={(v) => Number(v).toLocaleString("en-US")}
                   />
-                  <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                   <Tooltip
-                    formatter={(value) => [value, "عدد من انتخبوا"]}
-                    labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                    formatter={(value) => [Number(value).toLocaleString("en-US"), "عدد من انتخبوا"]}
+                    labelFormatter={(_, payload) => {
+                      const row = payload?.[0]?.payload as { name?: string } | undefined;
+                      return row?.name ?? "";
+                    }}
                     contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
                     labelStyle={{ color: "#ffffff" }}
                     itemStyle={{ color: "#86efac" }}
                   />
                   <Bar dataKey="voted" radius={[6, 6, 0, 0]}>
                     {batchChartData.map((entry, i) => (
-                      <Cell key={`school-cell-${entry.name}-${i}`} fill={schoolColors[i % schoolColors.length]} />
+                      <Cell key={`school-cell-${entry.slot}-${i}`} fill={schoolColors[i % schoolColors.length]} />
                     ))}
-                    <LabelList dataKey="voted" position="top" style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }} />
+                    <LabelList
+                      dataKey="voted"
+                      position="top"
+                      formatter={(v: number) => Number(v).toLocaleString("en-US")}
+                      style={{ fill: "#86efac", fontSize: 11, fontWeight: 700 }}
+                    />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="w-full sm:hidden" dir="ltr">
-              <div style={{ height: Math.max(280, mobileSchoolChartHeight) }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
-                    <Tooltip
-                      formatter={(value) => [Number(value).toLocaleString("en-US"), "عدد من انتخبوا"]}
-                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                      contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
-                      labelStyle={{ color: "#ffffff" }}
-                      itemStyle={{ color: "#86efac" }}
-                    />
-                    <Pie
-                      data={batchChartData}
-                      dataKey="voted"
-                      nameKey="shortName"
-                      cx="50%"
-                      cy="42%"
-                      outerRadius={84}
-                      innerRadius={40}
-                      paddingAngle={2}
-                      labelLine={false}
-                    >
-                      {batchChartData.map((entry, i) => (
-                        <Cell key={`school-mobile-cell-${entry.shortName}-${i}`} fill={schoolColors[i % schoolColors.length]} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-slate-300">
-                  {batchChartData.map((entry, i) => (
-                    <div key={`school-mobile-legend-${entry.shortName}-${i}`} className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="inline-block h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: schoolColors[i % schoolColors.length] }}
-                        />
-                        <span className="truncate">{entry.shortName}</span>
-                      </div>
-                      <span className="font-semibold text-emerald-300">{entry.voted.toLocaleString("en-US")}</span>
-                    </div>
-                  ))}
+            <div className="mt-3 grid grid-cols-1 gap-1 text-xs text-slate-300">
+              {batchChartData.map((entry, i) => (
+                <div key={`school-legend-${entry.slot}-${i}`} className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: schoolColors[i % schoolColors.length] }} />
+                    <span className="text-slate-400">#{entry.slot}</span>
+                    <span className="break-words">{entry.name}</span>
+                  </div>
+                  <span className="font-semibold text-emerald-300">{entry.voted.toLocaleString("en-US")}</span>
                 </div>
-              </div>
+              ))}
             </div>
           </div>
         </div>
@@ -260,14 +234,23 @@ export default function DashboardPage() {
             </div>
             <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
               <h3 className="mb-2 text-sm font-semibold text-slate-300">الرسم البياني للعائلات (عدد من انتخبوا)</h3>
-              <div className="hidden h-72 w-full sm:block" dir="ltr">
+              <div className="h-72 w-full" dir="ltr">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={familyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 20 }}>
-                    <XAxis dataKey="name" tick={{ fill: "#cbd5e1", fontSize: 12 }} interval={0} />
-                    <YAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
+                  <BarChart data={familyChartData} margin={{ top: 8, right: 10, left: 0, bottom: 18 }}>
+                    <XAxis dataKey="slot" tick={{ fill: "#cbd5e1", fontSize: 11 }} />
+                    <YAxis
+                      type="number"
+                      tick={{ fill: "#94a3b8", fontSize: 11 }}
+                      allowDecimals={false}
+                      domain={[0, familyMaxY]}
+                      tickFormatter={(v) => Number(v).toLocaleString("en-US")}
+                    />
                     <Tooltip
-                      formatter={(value) => [`${value}`, "عدد من انتخبوا"]}
-                      labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
+                      formatter={(value) => [Number(value).toLocaleString("en-US"), "عدد من انتخبوا"]}
+                      labelFormatter={(_, payload) => {
+                        const row = payload?.[0]?.payload as { name?: string } | undefined;
+                        return row?.name ?? "";
+                      }}
                       contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
                       labelStyle={{ color: "#ffffff" }}
                       itemStyle={{ color: "#86efac" }}
@@ -275,56 +258,29 @@ export default function DashboardPage() {
                     />
                     <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                       {familyChartData.map((entry, i) => (
-                        <Cell key={`family-cell-${entry.name}-${i}`} fill={familyColors[i % familyColors.length]} />
+                        <Cell key={`family-cell-${entry.slot}-${i}`} fill={familyColors[i % familyColors.length]} />
                       ))}
-                      <LabelList dataKey="value" position="top" style={{ fill: "#86efac", fontSize: 12, fontWeight: 700 }} />
+                      <LabelList
+                        dataKey="value"
+                        position="top"
+                        formatter={(v: number) => Number(v).toLocaleString("en-US")}
+                        style={{ fill: "#86efac", fontSize: 12, fontWeight: 700 }}
+                      />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <div className="w-full sm:hidden" dir="ltr">
-                <div style={{ height: Math.max(280, mobileFamilyChartHeight) }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
-                      <Tooltip
-                        formatter={(value) => [Number(value).toLocaleString("en-US"), "عدد من انتخبوا"]}
-                        labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName ?? ""}
-                        contentStyle={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 8 }}
-                        labelStyle={{ color: "#ffffff" }}
-                        itemStyle={{ color: "#86efac" }}
-                      />
-                      <Pie
-                        data={familyChartData}
-                        dataKey="value"
-                        nameKey="shortName"
-                        cx="50%"
-                        cy="42%"
-                        outerRadius={84}
-                        innerRadius={40}
-                        paddingAngle={2}
-                        labelLine={false}
-                      >
-                        {familyChartData.map((entry, i) => (
-                          <Cell key={`family-mobile-cell-${entry.shortName}-${i}`} fill={familyColors[i % familyColors.length]} />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-slate-300">
-                    {familyChartData.map((entry, i) => (
-                      <div key={`family-mobile-legend-${entry.shortName}-${i}`} className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="inline-block h-2.5 w-2.5 rounded-full"
-                            style={{ backgroundColor: familyColors[i % familyColors.length] }}
-                          />
-                          <span className="truncate">{entry.shortName}</span>
-                        </div>
-                        <span className="font-semibold text-emerald-300">{entry.value.toLocaleString("en-US")}</span>
-                      </div>
-                    ))}
+              <div className="mt-3 grid grid-cols-1 gap-1 text-xs text-slate-300">
+                {familyChartData.map((entry, i) => (
+                  <div key={`family-legend-${entry.slot}-${i}`} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: familyColors[i % familyColors.length] }} />
+                      <span className="text-slate-400">#{entry.slot}</span>
+                      <span className="break-words">{entry.name}</span>
+                    </div>
+                    <span className="font-semibold text-emerald-300">{entry.value.toLocaleString("en-US")}</span>
                   </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
@@ -334,38 +290,12 @@ export default function DashboardPage() {
   );
 }
 
-function toMobileShortLabel(text: string, maxChars: number): string {
-  const v = text.trim();
-  if (v.length <= maxChars) return v;
-  return `${v.slice(0, maxChars)}…`;
-}
-
-function WrappedAxisTick(props: { x?: number; y?: number; payload?: { value?: string | number } }) {
-  const x = props.x ?? 0;
-  const y = props.y ?? 0;
-  const raw = String(props.payload?.value ?? "").trim();
-  const words = raw.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-
-  for (let i = 0; i < words.length; i += 2) {
-    lines.push(words.slice(i, i + 2).join(" "));
-  }
-
-  const maxLines = 3;
-  const shown = lines.slice(0, maxLines);
-  if (lines.length > maxLines && shown.length > 0) shown[shown.length - 1] = `${shown[shown.length - 1]}…`;
-
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <text textAnchor="middle" fill="#cbd5e1" fontSize={11}>
-        {shown.map((line, idx) => (
-          <tspan key={`${line}-${idx}`} x={0} dy={idx === 0 ? 14 : 13}>
-            {line}
-          </tspan>
-        ))}
-      </text>
-    </g>
-  );
+function getDynamicAxisMax(values: number[]): number {
+  const maxVal = values.length ? Math.max(...values) : 0;
+  if (maxVal <= 0) return 5;
+  const padded = maxVal * 1.2;
+  const base = padded <= 10 ? 1 : padded <= 100 ? 5 : padded <= 1000 ? 25 : 100;
+  return Math.ceil(padded / base) * base;
 }
 
 function StatCard({
